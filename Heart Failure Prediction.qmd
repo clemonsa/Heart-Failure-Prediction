@@ -1,0 +1,482 @@
+---
+title: "Heart Failure Prediction Case Study"
+author: "Arvon Clemons II"
+date: January 9, 2026
+format: html
+toc: TRUE
+editor: visual
+theme: solar
+---
+
+## Introduction
+
+The goal of this case study is to create a heart failure prediction model with at least 90% accuracy using the [Heart Failure Prediction Dataset](https://www.kaggle.com/datasets/fedesoriano/heart-failure-prediction/data?select=heart.csv) by `fedesoriano`.
+
+This case study will follow several common steps of Data Analysis process such as preprocessing, Exploratory Data Analysis (EDA), model building, model evaluation, and model selection.
+
+## Preprocessing
+
+```{r}
+#| label: Loading packages
+library(pacman)
+p_load(tidymodels, # <1>
+       psych, # <2>
+       corrr, # <3>
+       car) # <4>
+```
+
+1.  This is a popular suite of packages used for modeling in the Tidy data syntax.
+
+2.  Some useful functions for Exploratory Data Analysis
+
+3.  Required for some data visualizations
+
+4.  Useful functions for model diagnostics
+
+```{r}
+#| label: Import data and preprocessing
+
+hf_data <- readr::read_csv("archive/heart.csv",
+                           col_names = T)
+
+describeData(hf_data)
+
+describeFast(hf_data)
+
+glimpse(hf_data)
+
+janitor::get_dupes(hf_data) %>% # determine if we have duplicate rows
+  nrow()
+
+```
+
+This dataset isn't missing any values and has no duplicate rows. Based on the provided context for this dataset, we will need to convert several variables into `factors` such as `Sex`, `FastingsBS` and `ExerciseAngina`.
+
+```{r}
+#| label: More preprocessing
+
+hf_data <- hf_data %>% mutate(across(.cols = c(Sex,
+                                    ChestPainType,
+                                    FastingBS,
+                                    RestingECG,
+                                    ExerciseAngina,
+                                    ST_Slope,
+                                    HeartDisease),
+                          .fns = as.factor))
+
+glimpse(hf_data)
+```
+
+Now we can get a better picture of our dataset through Exploratory Data Analysis.
+
+## Exploratory Data Analysis
+
+For our analysis we will select `HeartDisease` as the outcome (dependent) variable and explore the remaining variables in relation to it.
+
+### Heart Disease Distribution
+
+```{r}
+#| label: Distribution of Dependent Variable
+
+p <- ggplot(data = hf_data)
+
+p + 
+  geom_bar() +
+  aes(x = HeartDisease, 
+      fill = HeartDisease) +
+  scale_fill_discrete(palette = "Accent",
+                      name = "Status",
+                      labels = c("0" = "Negative", "1" = "Positive")) +
+  labs(x = "Heart Disease Status",
+       title = "Distribution of Heart Disease Outcome")
+  
+```
+
+As we can see our outcome variable is binary with sufficient counts in each category. Our initial assumption would be that a Logistic Regression model would be best for creating a predictive model.
+
+There several other assumptions which must be met to perform a Logistic Regression model:
+
+1)  Our observations must be independent, based on the data source this appears to be true.
+
+2)  There is low multicollinearity among our independent (predictor) variables. This we will be testing to confirm.
+
+3)  Linearity of the log-odds of the dependent variable and the continuous independent variables.
+
+4)  A large enough sample size, with our sample size of 918 observations we're confident that we meet this requirement. Using [Peduzzi Formula](https://pubmed.ncbi.nlm.nih.gov/8970487/) $N =\frac {10 \times k}{p}$ confirms that a sample size of at least `r signif(((ncol(hf_data) - 1) * 10) / (sum(hf_data$HeartDisease == "0") / nrow(hf_data)), 1)` is enough.
+
+### Continuous Predictors
+
+```{r}
+#| label: Correlation of Continuous Predictors
+
+corr_data <- hf_data %>% 
+  correlate() %>% 
+  rearrange() %>% 
+  shave()
+
+corr_data %>% 
+  rplot(print_cor = T,
+        colors = c('violetred2', 'snow2', 'dodgerblue2')
+        )
+
+corr_data %>% 
+  fashion()
+
+```
+
+The above correlation matrix information suggests that there is little collinearity between the predictors. We will further confirm this by obtaining the **Variance Inflation Factor** (VIF) after fitting our model.
+
+Next we will visualize the distribution of our continuous predictors by the outcome.
+
+```{r}
+#| label: Distribution of Continuous Predictors
+
+hf_data %>%
+  select(HeartDisease, where(is.numeric)) %>%
+  pivot_longer(cols = where(is.numeric), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x= HeartDisease, y = value, fill = HeartDisease)) +
+  geom_boxplot() +
+  facet_wrap(~ variable, scales = "free") +
+  labs(x = "Heart Disease Status",
+       y = "value",
+       title = "Distribution of Continuous Predictors by Heart Disease Status") +
+  scale_fill_discrete(palette = "Accent",
+                      name = "Status",
+                      labels = c("0" = "Negative", "1" = "Positive"))
+```
+
+We can see that for those who do not have heart disease:
+
+1)  Tend to be younger
+
+2)  Most serum cholesterol levels \~227 mm/dl
+
+3)  A higher maximum heart rate
+
+4)  Lower ST Depression (Old Peak)
+
+Noticeably the resting blood pressure seems to be very similar between the groups.
+
+### Categorical Predictors
+
+Finally are the Categorical Predictors
+
+```{r}
+#| label: Distribution of Categorical Predictors
+
+hf_data %>%
+  select(where(is.factor)) %>%
+  pivot_longer(cols = -HeartDisease, names_to = "variable", values_to = "value") %>% 
+  ggplot(aes(x = value, fill = HeartDisease)) +
+  geom_bar(position = "dodge2") +
+  facet_wrap(~ variable, scales = "free") +
+  labs(x = "",
+       title = "Distribution of Categorical Predictors by Heart Disease Status") +
+  scale_fill_discrete(palette = "Accent",
+                      name = "Status",
+                      labels = c("0" = "Negative", "1" = "Positive"))
+```
+
+We can see that for those who do not have heart disease:
+
+1)  They are mostly non-asymptomatic for chest pain.
+
+2)  The majority lack exercise-induced angina.
+
+3)  Few have a fasting blood sugar level greater than 120 mg/dl
+
+4)  Fewer resting ECG with probable or definite left ventricular hypertrophy
+
+5)  Demonstrate major upsloping of the peak exercise ST segment, in contrast those who are positive show a flatter slope.
+
+Notably most cases who are positive for heart disease are overwhelmingly male. Furthermore Fasting Blood Sugar levels are a big vague as a categorical variable in contrast to a continuous variable as there are similar amounts of participants within both outcome groups with blood sugar equal or lesser than 120 mg/dl.
+
+## Model Building
+
+In regression analysis there are many things to consider when building a model such as whether or not there is interaction between the predictive variables. In the interest of keeping things simple for this case study, I will be assuming **no interaction**.
+
+Our Exploratory Data Analysis has revealed two predictors that may not be useful for determining heart disease. Fasting blood sugar and resting blood pressure.
+
+We build four different models:
+
+1)  A most restricted model without either the `FastingBS` or `RestingBP`
+
+2)  A less restricted model without `FastingBS`
+
+3)  A less restricted model without `RestingBP`
+
+4)  A least restricted model with all predictors.
+
+First we must split our data between a testing and training set.
+
+```{r}
+#| label: Data Split
+
+set.seed(01022026)
+
+# 70/30 training/testing split
+hf_split <- initial_split(hf_data, prop = 0.70)
+
+hf_split
+
+hf_train <- training(hf_split) # training dataset
+hf_test <- testing(hf_split) # testing dataset
+
+```
+
+We now have a Training/Testing data split of `r length(hf_split$in_id)`/`r nrow(hf_split$data) - length(hf_split$in_id)`.
+
+```{r}
+#| label: Model Builds
+
+# Define logistic regression model
+glm_spec <- logistic_reg() %>% 
+  set_engine("glm") %>% 
+  set_mode("classification")
+
+# Create recipes for each model
+
+least_restricted <- recipe(HeartDisease ~ ., # <1>
+                          data = hf_train) %>% 
+  step_dummy(all_nominal_predictors()) # create dummy variables
+
+rm_fasting <- least_restricted %>% 
+  step_rm(contains("FastingBS")) # <2>
+
+rm_resting <- least_restricted %>% 
+  step_rm(RestingBP) # <3>
+
+most_restricted <- least_restricted %>% 
+  step_rm(RestingBP, contains("FastingBS")) # <4>
+
+preproc <- list(
+  least = least_restricted,
+  fasting = rm_fasting,
+  resting = rm_resting,
+  most = most_restricted
+)
+
+glm_models <- workflow_set(preproc, 
+                           list(glm = glm_spec),
+                           cross = T)
+```
+
+In `tidymodels` there is a consistent and simpler syntax for building models, one such example is the use of the `set_engine()` and `logistic_regression()` functions to build a Logistic Regression model. Instead of creating multiple models at once, `tidymodels` allows us to instead create several `recipes` for each model and then a `workflow_set` to coordinate the construction.\]
+
+More can be learned from the [Tidy Modeling With R](https://www.tmwr.org/) online textbook.
+
+1)  The least restricted model with all predictors included
+
+2)  All `FastBS` predictors removed
+
+3)  `RestingBP` predictor removed
+
+4)  The most restricted model with `FastBS` and `RestingBP` predictors removed.
+
+## Model Evaluation
+
+```{r}
+#| label: Model Metrics
+
+set.seed(01032026)
+hf_folds <- vfold_cv(hf_train, v = 10) # cross-validation, 10-fold)
+
+keep_pred <- control_resamples(save_pred = TRUE, # store predictions upon fitting
+                               save_workflow = TRUE)
+
+glm_models <- glm_models %>% 
+  workflow_map("fit_resamples", # model fitting
+               seed = 2026,
+               verbose = T,
+               resamples = hf_folds,
+               control = keep_pred)
+
+glm_models %>% 
+  collect_metrics() %>% # useful function to autogenerate evaluation metrics
+  select(wflow_id, .metric, mean) %>% 
+  arrange(.metric, desc(mean))
+```
+
+```{r}
+#| label: Model Evaluation - Accuracy
+
+autoplot(
+   glm_models,
+   rank_metric = "accuracy",  # <- how to order models
+   metric = "accuracy",       # <- which metric to visualize
+) +
+   geom_text(aes(label = wflow_id,
+                 colour = wflow_id),
+             angle = 90,
+             vjust = 1) +
+   theme(legend.position = "none") +
+  labs(title = "Accuracy",
+       x = "Rank",
+       y = "Accuracy")
+```
+
+```{r}
+#| label: Model Evaluation - Brier Classification
+
+autoplot(
+   glm_models,
+   rank_metric = "brier_class",  # <- how to order models
+   metric = "brier_class",       # <- which metric to visualize
+) +
+   geom_text(aes(label = wflow_id,
+                 colour = wflow_id),
+             angle = 90,
+             vjust = 1) +
+   theme(legend.position = "none") +
+  labs(title = "Brier Classification",
+       x = "Rank",
+       y = "Brier Classification")
+```
+
+```{r}
+#| label: Model Evaluation - Area Under The ROC Curve
+
+autoplot(
+   glm_models,
+   rank_metric = "roc_auc",  # <- how to order models
+   metric = "roc_auc",       # <- which metric to visualize
+) +
+   geom_text(aes(label = wflow_id,
+                 colour = wflow_id),
+             angle = 90,
+             vjust = 1) +
+   theme(legend.position = "none") +
+  labs(title = "Area Under The ROC Curve",
+       x = "Rank",
+       y = "Area Under The ROC Curve")
+```
+
+Based on the above metric evaluations it appears that either the `least_glm` or `resting_glm` models would be the best selection, however there is significant overlap in the confidence intervals for each metric across all models.
+
+A general rule-of-thumb is to select the most parsimonious (simple) model in such a case and thus for the final model I select the `most_glm` model which is defined as:
+
+$$
+\begin{equation}
+P(Y = 1)= \beta_0 + \beta_1 Age + \beta_2 Cholesterol + \beta_3 MaxHR + \beta_4 Oldpeak + \beta_5 Sex_{M} +\beta_6 ChestPainType_{ATA} + \beta_7 ChestPainType_{NA}P + \beta_8 ChestPainType_{TA} + \varepsilon
+\end{equation}
+$$ Where $\beta_0$ is the intercept, the value of log-odds (logit) of the outcome $\mathrm{Y}$ when all predictors are at zero or baseline levels.
+
+While $\beta_{x+i}$ are the Log Odds Ratio coefficients for each predictor variable and $\varepsilon$ is the random error.
+
+## Final Model Build
+
+```{r}
+#| label: Final Model Fit
+
+final_workflow <- glm_models %>% 
+  extract_workflow_set_result("most_glm") %>% # extract 'most_glm' formulation
+  select_best(metric = "brier_class") # metric choice doesn't matter for Logit Reg
+
+# Model Fit
+final_fit <- glm_models %>% 
+  extract_workflow("most_glm") %>% 
+  finalize_workflow(final_workflow) %>% 
+  last_fit(hf_split)
+
+# Extract Model
+final_fit %>% 
+  extract_fit_engine() %>% # allows extraction of base R model info
+  tidy() %>%
+  rename(p_value = p.value) %>% 
+  mutate(p_value = signif(p_value, 2)) # <1>
+
+final_fit %>% 
+  collect_metrics() %>% # <2>
+  select(-c(.estimator, .config)) %>% 
+  rename(Metric = .metric,
+         Value = .estimate)
+
+```
+
+1)  Under the `estimate` column we can see the $\beta_{x+1}$ values for each predictor. \n Under `p_value` we get some information telling us whether the predictor has a statistically significant effect on the outcome (i.e. is the coefficient actually 0)
+
+2)  We get some basic model evaluation metrics such as Accuracy, the Area Under the ROC Curve score and Brier Score. For both Accuracy and AUC the closer to 1 the better the model fit, while for Brier Score the closer to 0 means a better fit.
+
+Here we can see that our model seems to fit pretty well.
+
+### Metrics
+
+Now we will do a final evaluation of our model using several additional metrics based on the predictions as well as check for collinearity between the predictors.
+
+```{r}
+#| label: Final Model Classification Metrics
+
+# Check for collinearity
+final_fit %>% 
+  extract_fit_engine() %>% 
+  car::vif() # <1>
+
+# Data frame of predictions
+final_df <- final_fit %>% 
+  collect_predictions() %>% 
+  select(contains(".pred_"), truth = HeartDisease)
+
+# Confusion Matrix
+conf_mat(final_df, truth = truth, estimate = .pred_class)
+
+# More metrics
+multi_metric<- metric_set(mcc,
+                          f_meas,
+                          sens,
+                          spec,
+                          precision,
+                          kap)
+
+multi_metric(final_df, # <2>
+             truth = truth,
+             estimate = .pred_class,
+             event_level = "first",
+             .pred_0) %>% 
+  select(-.estimator) %>% 
+  rename(Metric = .metric,
+         Value = .estimate)
+
+final_fit %>% 
+  extract_fit_engine() %>% 
+  car::outlierTest() # <3>
+```
+
+1.  Using `car::vif()` we can see there are only two predictors of some moderate concern for collinearity within our model, `ST_Slope_Flat` and `ST_Slope_Up` with values \~ 4. Conventionally values of 4 - 5 are considered acceptable in prediction models.
+
+2.  Additional metrics used shows that our model is good.
+
+3.  Outlier data points which could improve our model if removed.
+
+### Visualizations
+
+```{r}
+#| label: Final Model Visualizations
+
+final_fit %>% 
+  extract_fit_engine() %>% 
+  car::influenceIndexPlot() # identify outliers
+
+final_fit %>% 
+  extract_fit_engine() %>% 
+  car::influencePlot() # Influential Points
+
+# final_fit %>% 
+#   extract_fit_engine() %>% 
+#   car::marginalModelPlots()
+
+roc_curve(final_df,
+          truth = truth,
+          event_level = "first",
+          .pred_0) %>%
+  autoplot() # ROC Curve Plot
+```
+
+Our visualizations provide several outliers or influential observations that we should consider removing before refitting our model.
+
+## Next Steps
+
+Unfortunately our final model does not meet the 90% accuracy goal we have set at the beginning of this Case Study. A suggestion would be to use another classification model such as a Regularized Logistic Regression model, Support Vector Machine, k-Nearest Neighbors and Decision Trees. 
+
+We could also remove data points with high influence or outliers to see if that improves our fit.
+
+We will approach this again in another Case Study.
