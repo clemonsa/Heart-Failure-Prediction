@@ -6,7 +6,7 @@ This case study will follow several common steps of Data Analysis process such a
 
 ## Exploratory Data Analysis
 
-!["Distribution of Predictors"](Heart-Failure-Prediction_files/figure-html/Distribution of Continuous Predictors-1.png)
+![](https://github.com/clemonsa/Heart-Failure-Prediction/blob/5cc9eccfeb03444212dc2c2c7d3bd0150db19049/Heart-Failure-Prediction_files/figure-html/Distribution%20of%20Dependent%20Variable-1.png)
 
 As we can see our outcome variable is binary with sufficient counts in each category. Our initial assumption would be that a Logistic Regression model would be best for creating a predictive model.
 
