@@ -47,7 +47,7 @@ Noticeably the resting blood pressure seems to be very similar between the group
 
 Finally are the Categorical Predictors
 
-![](https://github.com/clemonsa/Heart-Failure-Prediction/blob/main/Heart-Failure-Prediction_files/figure-html/Distribution%20of%20Continuous%20Predictors-1.png)
+![](https://github.com/clemonsa/Heart-Failure-Prediction/blob/main/Heart-Failure-Prediction_files/figure-html/Distribution%20of%20Categorical%20Predictors-1.png)
 
 We can see that for those who do not have heart disease:
 
